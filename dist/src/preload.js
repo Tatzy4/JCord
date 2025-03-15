@@ -3,6 +3,17 @@
 // This file is injected into Discord to add our modifications
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
+// Enhanced logging function with consistent background style
+function log(module, message) {
+    // Colors for consistent background style
+    const colors = {
+        main: 'background: #5865F2; color: white; border-radius: 3px; padding: 1px 3px; font-weight: bold',
+        module: 'background: #3ba55c; color: white; border-radius: 3px; padding: 1px 3px; font-weight: bold',
+        reset: ''
+    };
+    // Log with consistent styling
+    console.log(`%c JC %c ${module} %c ${message}`, colors.main, colors.module, colors.reset);
+}
 // Ensure JaneczekCord runs first by adding priority code
 (function enforceJaneczekCordPriority() {
     // This self-executing function runs first and ensures JaneczekCord has highest priority
@@ -25,17 +36,75 @@ const electron_1 = require("electron");
     }, { once: true });
     log('Core', 'Priority enforced');
 })();
-// Enhanced logging function with consistent background style
-function log(module, message) {
-    // Colors for consistent background style
-    const colors = {
-        main: 'background: #5865F2; color: white; border-radius: 3px; padding: 1px 3px; font-weight: bold',
-        module: 'background: #3ba55c; color: white; border-radius: 3px; padding: 1px 3px; font-weight: bold',
-        reset: ''
-    };
-    // Log with consistent styling
-    console.log(`%c JC %c ${module} %c ${message}`, colors.main, colors.module, colors.reset);
-}
+// Initialize JC object
+window.JC = {
+    React: null,
+    ReactDOM: null,
+    webpackRequire: null,
+    webpackModules: {},
+    getModule: null,
+    getModuleByDisplayName: null,
+    getModuleByProps: null,
+    findModules: null,
+    DevTools: {
+        findComponents: (filter = '') => {
+            const components = {};
+            if (window.DiscordComponents) {
+                for (const name in window.DiscordComponents) {
+                    if (filter === '' || name.toLowerCase().includes(filter.toLowerCase())) {
+                        components[name] = window.DiscordComponents[name];
+                    }
+                }
+            }
+            return components;
+        },
+        inspectComponent: (element) => {
+            if (!window.React) {
+                console.error('React not found yet');
+                return null;
+            }
+            try {
+                let fiber = null;
+                // Try different React internal property patterns
+                for (const key in element) {
+                    if (key.startsWith('__reactFiber') ||
+                        key.startsWith('__reactInternalInstance')) {
+                        fiber = element[key];
+                        break;
+                    }
+                }
+                if (!fiber) {
+                    console.error('Could not find React fiber on element');
+                    return null;
+                }
+                // Walk up the fiber tree to find component instances
+                let current = fiber;
+                const components = [];
+                while (current) {
+                    if (current.stateNode && current.stateNode.constructor &&
+                        current.stateNode.constructor.name !== 'HTMLDivElement') {
+                        components.push({
+                            name: current.type?.displayName || current.type?.name || 'Unknown',
+                            instance: current.stateNode,
+                            fiber: current
+                        });
+                    }
+                    current = current.return;
+                }
+                return components;
+            }
+            catch (e) {
+                console.error('Error inspecting component:', e);
+                return null;
+            }
+        },
+        getComponentByName: (name) => {
+            return window.DiscordComponents?.[name] || null;
+        }
+    }
+};
+// Create global placeholder for DiscordComponents
+window.DiscordComponents = {};
 // Load Discord's original preload
 function loadOriginalPreload() {
     try {
@@ -182,162 +251,251 @@ function blockAnalytics() {
         }
     }, 1000);
 }
-// Detect and expose React before Discord loads
-function captureReact() {
-    // Create placeholder
-    window.JC = {
-        React: null
-    };
-    // Save React detection
-    let reactFound = false;
-    // Function to check if an object is React
-    const isReact = (obj) => {
-        return obj &&
-            typeof obj.createElement === 'function' &&
-            typeof obj.Component === 'function' &&
-            typeof obj.useState === 'function';
-    };
-    // Method 1: Intercept webpack modules
-    const originalPush = Array.prototype.push;
-    Array.prototype.push = function (...args) {
-        // Check if this might be a webpack chunk
-        if (this === window.webpackChunkdiscord_app && args[0] && Array.isArray(args[0])) {
-            log('Webpack', 'Monitoring Discord webpack chunk');
-            // Check if this chunk contains a module map
-            if (args[0].length > 1 && typeof args[0][1] === 'object') {
-                const moduleMap = args[0][1];
-                // Intercept module factories to detect React
-                for (const id in moduleMap) {
-                    const originalFactory = moduleMap[id];
-                    moduleMap[id] = function (module, exports, require) {
-                        // Call original factory
-                        originalFactory.apply(this, arguments);
-                        // Check if this is React
-                        if (!reactFound && isReact(exports)) {
-                            log('React', 'React captured from webpack!');
-                            window.JC.React = exports;
-                            reactFound = true;
-                        }
-                        // Check for nested exports
-                        if (!reactFound && exports && typeof exports === 'object') {
-                            for (const key in exports) {
-                                if (isReact(exports[key])) {
-                                    log('React', `React found in module export ${key}`);
-                                    window.JC.React = exports[key];
-                                    reactFound = true;
-                                    break;
-                                }
-                            }
-                        }
-                    };
-                }
-            }
-            // Save webpack require
-            if (!reactFound && args[0].length > 2 && typeof args[0][2] === 'function') {
-                const webpackRequire = args[0][2];
-                window.JC.webpackRequire = webpackRequire;
-                // Scan for React in existing modules
-                if (webpackRequire.c) {
-                    log('Webpack', 'Scanning webpack cache for React');
-                    for (const id in webpackRequire.c) {
-                        const module = webpackRequire.c[id];
-                        if (!module?.exports)
-                            continue;
-                        if (isReact(module.exports)) {
-                            log('React', 'React found in webpack cache');
-                            window.JC.React = module.exports;
-                            reactFound = true;
-                            break;
-                        }
-                        // Check exports object
-                        if (typeof module.exports === 'object') {
-                            for (const key in module.exports) {
-                                if (isReact(module.exports[key])) {
-                                    log('React', `React found in cached module ${id}.${key}`);
-                                    window.JC.React = module.exports[key];
-                                    reactFound = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (reactFound)
-                            break;
-                    }
-                }
-            }
-        }
-        return originalPush.apply(this, args);
-    };
-    // Method 2: Check DOM for React components
-    const checkDOMForReact = () => {
-        const reactElements = document.querySelectorAll('[data-reactroot], [reactroot], [react-root]');
-        if (reactElements.length > 0) {
-            log('React', `Found ${reactElements.length} React elements in DOM`);
-            for (const el of reactElements) {
-                // Search for React internal properties
-                for (const key in el) {
-                    if (key.startsWith('__reactInternalInstance') ||
-                        key.startsWith('__reactFiber') ||
-                        key.startsWith('__reactProps')) {
-                        log('React', 'Found React internal property');
-                        // Try to find React through element internals
-                        const internal = el[key];
-                        if (internal && internal._owner && internal._owner.stateNode) {
-                            const component = internal._owner.stateNode;
-                            // Try to find React through component internals
-                            const proto = Object.getPrototypeOf(component);
-                            if (proto && proto.constructor && proto.constructor.name === 'Component') {
-                                // Likely found React.Component
-                                const reactLib = Object.getPrototypeOf(proto.constructor);
-                                if (isReact(reactLib)) {
-                                    log('React', 'React found through DOM elements');
-                                    window.JC.React = reactLib;
-                                    reactFound = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    };
-    // Check DOM on load
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', checkDOMForReact);
+// --- VENCORD-STYLE REACT CAPTURE IMPLEMENTATION ---
+// Define global variables for React and its hooks
+let React;
+let ReactDOM;
+let useState;
+let useEffect;
+let useLayoutEffect;
+let useMemo;
+let useRef;
+let useReducer;
+let useCallback;
+// Helper for resolving the ready promise
+let _resolveReady;
+const onceReady = new Promise(r => _resolveReady = r);
+// Storage for webpack modules
+let wreq;
+let cache;
+const waitForSubscriptions = new Map();
+const moduleListeners = new Set();
+const factoryListeners = new Set();
+// Function to initialize webpack
+function _initWebpack(webpackRequire) {
+    wreq = webpackRequire;
+    cache = webpackRequire.c;
+    Object.defineProperty(webpackRequire.c, Symbol.toStringTag, {
+        value: "ModuleCache",
+        configurable: true,
+        writable: true,
+        enumerable: false
+    });
+    log('React', 'Webpack initialized');
+}
+// Wait for a module to be loaded
+// Poprawiona funkcja waitFor z obsługą różnych typów filtrów
+function waitFor(filter, callback, { isIndirect = false } = {}) {
+    // Konwertujemy filtr na funkcję FilterFn
+    let filterFn;
+    if (typeof filter === "string") {
+        filterFn = (m) => m[filter] !== undefined;
+    }
+    else if (Array.isArray(filter)) {
+        filterFn = (m) => filter.every(p => m[p] !== undefined);
+    }
+    else if (typeof filter === "function") {
+        filterFn = filter;
     }
     else {
-        checkDOMForReact();
+        throw new Error("filter must be a string, string[] or function, got " + typeof filter);
     }
-    // Method 3: Check global variables immediately
-    log('React', 'Searching for React in global scope and setting up monitors');
-    // Check common global React variables
-    const possibleNames = ['React', 'react', 'ReactModule', 'ReactDOM'];
-    for (const name of possibleNames) {
-        if (window[name] && isReact(window[name])) {
-            log('React', `React found in global.${name}`);
-            window.JC.React = window[name];
-            reactFound = true;
-            break;
+    if (cache != null) {
+        // Sprawdzamy czy moduł już jest załadowany
+        for (const key in cache) {
+            const mod = cache[key];
+            if (!mod?.loaded || mod.exports == null)
+                continue;
+            if (filterFn(mod.exports)) {
+                return void callback(mod.exports, key);
+            }
+            if (typeof mod.exports !== "object")
+                continue;
+            for (const nestedMod in mod.exports) {
+                const nested = mod.exports[nestedMod];
+                if (nested && filterFn(nested)) {
+                    return void callback(nested, key);
+                }
+            }
         }
     }
-    // If we don't find React immediately, that's expected
-    // The array.push interceptor will catch it when it loads
-    if (!reactFound) {
-        log('React', 'React not found immediately - will intercept when loaded');
-    }
+    // Dodajemy do subskrypcji aby poczekać na załadowanie modułu
+    waitForSubscriptions.set(filterFn, callback);
+    log('React', `Waiting for module: ${filterFn.toString().substring(0, 30)}...`);
 }
-// Expose JaneczekCord API
+// Hook webpack
+function setupWebpackHook() {
+    log('React', 'Setting up Vencord-style webpack module hook');
+    // Look for webpack system
+    const webpackChunkName = Object.keys(window).find(key => key.startsWith('webpackChunk') && Array.isArray(window[key]));
+    if (!webpackChunkName) {
+        log('React', 'webpackChunk not found, will try alternative methods');
+        return;
+    }
+    // Define a setter for the module to intercept webpack
+    Object.defineProperty(Function.prototype, "m", {
+        configurable: true,
+        enumerable: false,
+        set(originalModules) {
+            // Restore normal property descriptor
+            Object.defineProperty(this, "m", { value: originalModules });
+            const { stack } = new Error();
+            if (!stack?.includes("http") || stack.match(/at \d+? \(/) || !String(this).includes("exports:{}")) {
+                return;
+            }
+            const fileName = stack.match(/\/assets\/(.+?\.js)/)?.[1];
+            // Define a setter for the bundlePath property
+            Object.defineProperty(this, "p", {
+                enumerable: false,
+                set(bundlePath) {
+                    Object.defineProperty(this, "p", { value: bundlePath });
+                    if (bundlePath !== "/assets/") {
+                        return;
+                    }
+                    if (wreq == null && this.c != null) {
+                        log('React', `Main WebpackInstance found in ${fileName}, initializing`);
+                        _initWebpack(this);
+                        // Set up React capture
+                        setupReactCapture();
+                    }
+                }
+            });
+            log('React', 'Module setter hook installed');
+        }
+    });
+    log('React', 'Webpack module hook set up successfully');
+}
+// Actual React capture
+function setupReactCapture() {
+    log('React', 'Setting up React capture');
+    // First, locate React and ReactDOM
+    waitFor("useState", m => {
+        React = m;
+        ({ useEffect, useState, useLayoutEffect, useMemo, useRef, useReducer, useCallback } = React);
+        window.JC.React = React;
+        window.React = React;
+        log('React', 'React captured successfully!');
+    });
+    waitFor(["createPortal", "render"], m => {
+        ReactDOM = m;
+        window.JC.ReactDOM = ReactDOM;
+        window.ReactDOM = ReactDOM;
+        log('React', 'ReactDOM captured successfully!');
+    });
+    // Set up callback for CONNECTION_OPEN event to mark the ready state
+    const fluxDispatcherCheck = setInterval(() => {
+        const FluxDispatcher = window.JC.getModuleByProps?.('dispatch', 'subscribe');
+        if (FluxDispatcher) {
+            clearInterval(fluxDispatcherCheck);
+            const cb = () => {
+                FluxDispatcher.unsubscribe("CONNECTION_OPEN", cb);
+                _resolveReady();
+                log('React', 'Discord connection ready');
+            };
+            FluxDispatcher.subscribe("CONNECTION_OPEN", cb);
+            log('React', 'Set up ready state detection');
+        }
+    }, 500);
+    // Set up module finder utilities 
+    const utilsCheck = setInterval(() => {
+        if (wreq && wreq.c) {
+            clearInterval(utilsCheck);
+            // Find modules function
+            window.JC.findModules = (filter) => {
+                const modules = [];
+                for (const id in wreq.c) {
+                    const module = wreq.c[id]?.exports;
+                    if (module && filter(module)) {
+                        modules.push(module);
+                    }
+                }
+                return modules;
+            };
+            // Get single module
+            window.JC.getModule = (filter) => {
+                for (const id in wreq.c) {
+                    const module = wreq.c[id]?.exports;
+                    if (module && filter(module)) {
+                        return module;
+                    }
+                }
+                return null;
+            };
+            // Get module by props
+            window.JC.getModuleByProps = (...props) => {
+                return window.JC.getModule(m => {
+                    if (!m)
+                        return false;
+                    return props.every(prop => m[prop] !== undefined);
+                });
+            };
+            // Get module by display name
+            window.JC.getModuleByDisplayName = (name) => {
+                return window.JC.getModule(m => {
+                    if (!m)
+                        return false;
+                    if (m.default && m.default.displayName === name)
+                        return true;
+                    if (m.displayName === name)
+                        return true;
+                    return false;
+                });
+            };
+            // Store webpack require
+            window.JC.webpackRequire = wreq;
+            log('React', 'Created webpack module utilities');
+        }
+    }, 500);
+    // Hook into module loading to collect exported components
+    moduleListeners.add((exports, id) => {
+        try {
+            // Look for React components by displayName
+            if (exports && typeof exports === 'object') {
+                // Check for direct exports with displayName
+                if (exports.displayName && typeof exports === 'function') {
+                    window.DiscordComponents[exports.displayName] = exports;
+                }
+                // Check for default export with displayName
+                if (exports.default?.displayName && typeof exports.default === 'function') {
+                    window.DiscordComponents[exports.default.displayName] = exports.default;
+                }
+                // Check nested exports
+                for (const key in exports) {
+                    if (exports[key]?.displayName && typeof exports[key] === 'function') {
+                        window.DiscordComponents[exports[key].displayName] = exports[key];
+                    }
+                }
+            }
+        }
+        catch (e) {
+            // Ignore errors
+        }
+    });
+}
+// Expose JaneczekCord API 
 function exposeAPI() {
     try {
-        electron_1.contextBridge.exposeInMainWorld('JC', {
-            version: '1.0.0',
-            enabled: true
-        });
+        electron_1.contextBridge.exposeInMainWorld('JC', window.JC);
+        electron_1.contextBridge.exposeInMainWorld('$JC', window.JC);
+        electron_1.contextBridge.exposeInMainWorld('$r', (element) => window.JC.DevTools.inspectComponent(element));
+        electron_1.contextBridge.exposeInMainWorld('$components', (filter) => window.JC.DevTools.findComponents(filter));
         log('Core', 'API exposed to renderer process');
     }
     catch (error) {
         log('Error', 'API exposure failed: ' + error);
     }
+}
+// Add helpful React DevTools console messages
+function addDevToolsHelp() {
+    setTimeout(() => {
+        console.log('%c JaneczekCord DevTools %c Use these commands to inspect React:', 'color: white; background: #5865F2; font-weight: bold; padding: 2px 4px; border-radius: 3px;', 'color: white; background: #3ba55c; font-weight: bold; padding: 2px 4px; border-radius: 3px;');
+        console.log('• %c$JC%c - Access the JaneczekCord API', 'font-weight:bold', 'font-weight:normal');
+        console.log('• %c$components()%c - List all Discord components', 'font-weight:bold', 'font-weight:normal');
+        console.log('• %c$components("button")%c - Find components by name', 'font-weight:bold', 'font-weight:normal');
+        console.log('• %c$r(element)%c - Inspect a DOM element\'s React components', 'font-weight:bold', 'font-weight:normal');
+        console.log('• %cwindow.React%c - Direct access to React API', 'font-weight:bold', 'font-weight:normal');
+        console.log('• %cwindow.ReactDOM%c - Direct access to ReactDOM API', 'font-weight:bold', 'font-weight:normal');
+    }, 5000); // Wait for Discord to fully load
 }
 // Initialize JaneczekCord
 function initJaneczekCord() {
@@ -361,7 +519,6 @@ function initJaneczekCord() {
                         wordmark.innerHTML = '';
                         wordmark.appendChild(customLogo);
                         wordmark.setAttribute('janeczekcord-modified', 'true');
-                        log('UI', 'Discord logo replaced with JaneczekCord branding');
                     }
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
@@ -370,6 +527,8 @@ function initJaneczekCord() {
                 log('Error', 'Failed to replace Discord logo: ' + error);
             }
         }, 1000);
+        // Add DevTools help message
+        addDevToolsHelp();
         // Signal that JaneczekCord is ready
         window.dispatchEvent(new Event('JaneczekCordReady'));
         log('Core', 'JaneczekCord initialization complete');
@@ -383,14 +542,13 @@ try {
     log('Core', 'JaneczekCord starting up');
     // 1. Install Sentry blocking
     blockSentryEarly();
-    // 2. Set up React capture before loading Discord
-    log('Core', 'Setting up React capture before Discord loads');
-    captureReact();
+    // 2. Set up Vencord-style webpack module hook for React capture
+    setupWebpackHook();
     // 3. Block Discord analytics
     blockAnalytics();
-    // 4. Only NOW load Discord's original preload
+    // 4. Load Discord's original preload
     loadOriginalPreload();
-    // 5. Expose JaneczekCord API
+    // 5. Expose JaneczekCord API 
     exposeAPI();
     // 6. Initialize JaneczekCord UI when DOM is ready
     if (document.readyState === 'loading') {
