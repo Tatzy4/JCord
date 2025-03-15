@@ -3,7 +3,7 @@
     "main": "src/patcher.js",
     "version": "1.0.0",
     "description": "JaneczekCord - A simple Discord client modification",
-    "author": "JaneczekCord Team",
+    "author": "Janeczek/tatzt4",
     "license": "MIT",
     "scripts": {
         "build": "tsc",
