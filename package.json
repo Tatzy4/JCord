@@ -1,0 +1,21 @@
+{
+    "name": "janeczekcord",
+    "main": "src/patcher.js",
+    "version": "1.0.0",
+    "description": "JaneczekCord - A simple Discord client modification",
+    "author": "JaneczekCord Team",
+    "license": "MIT",
+    "scripts": {
+        "build": "tsc",
+        "inject": "npm run build && node dist/src/installer.js --inject",
+        "uninject": "node dist/src/installer.js --uninject",
+        "start": "node installer-wrapper.js --inject",
+        "stop": "node installer-wrapper.js --uninject"
+    },
+    "devDependencies": {
+        "@types/node": "^18.19.80",
+        "electron": "^22.0.0",
+        "ts-node": "^10.9.1",
+        "typescript": "^5.0.4"
+    }
+}
