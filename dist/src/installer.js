@@ -49,7 +49,7 @@ function generateDiscordPackageJson() {
         name: "janeczekcord",
         main: "patcher.js",
         version: "1.0.0",
-        description: "JaneczekCord - A simple Discord client modification",
+        description: "JaneczekCord - A modular Discord client modification",
         author: "JaneczekCord Team",
         license: "MIT"
     }, null, 2);
@@ -330,6 +330,28 @@ async function waitForFileUnlock(filePath, maxAttempts = 10) {
     console.log(`File is still locked after ${maxAttempts} attempts`);
     return false;
 }
+// Recursively copy a directory
+function copyDirectory(source, destination) {
+    // Create destination directory if it doesn't exist
+    if (!fs.existsSync(destination)) {
+        fs.mkdirSync(destination, { recursive: true });
+    }
+    // Get all files and directories in source
+    const entries = fs.readdirSync(source, { withFileTypes: true });
+    // Copy each entry
+    for (const entry of entries) {
+        const sourcePath = path.join(source, entry.name);
+        const destPath = path.join(destination, entry.name);
+        if (entry.isDirectory()) {
+            // Recursively copy directory
+            copyDirectory(sourcePath, destPath);
+        }
+        else {
+            // Copy file
+            fs.copyFileSync(sourcePath, destPath);
+        }
+    }
+}
 // Function to inject JaneczekCord
 async function inject() {
     console.log('Starting JaneczekCord injection...');
@@ -373,8 +395,10 @@ async function inject() {
     try {
         // Verify that compiled files exist
         const distDir = path.resolve('dist');
-        const distPatcherPath = path.join(distDir, 'src', 'patcher.js');
-        const distPreloadPath = path.join(distDir, 'src', 'preload.js');
+        const srcDir = path.join(distDir, 'src');
+        // Check for main files
+        const distPatcherPath = path.join(srcDir, 'patcher.js');
+        const distPreloadPath = path.join(srcDir, 'preload.js');
         console.log(`Checking for: ${distPatcherPath}`);
         if (!fs.existsSync(distPatcherPath)) {
             console.error(`Error: Could not find ${distPatcherPath}`);
@@ -384,6 +408,20 @@ async function inject() {
         console.log(`Checking for: ${distPreloadPath}`);
         if (!fs.existsSync(distPreloadPath)) {
             console.error(`Error: Could not find ${distPreloadPath}`);
+            console.error('Make sure you have compiled the TypeScript files with "npm run build"');
+            return;
+        }
+        // Check for core modules
+        const distCorePath = path.join(srcDir, 'core');
+        if (!fs.existsSync(distCorePath)) {
+            console.error(`Error: Could not find core modules at ${distCorePath}`);
+            console.error('Make sure you have compiled the TypeScript files with "npm run build"');
+            return;
+        }
+        // Check for features modules
+        const distFeaturesPath = path.join(srcDir, 'features');
+        if (!fs.existsSync(distFeaturesPath)) {
+            console.error(`Error: Could not find features modules at ${distFeaturesPath}`);
             console.error('Make sure you have compiled the TypeScript files with "npm run build"');
             return;
         }
@@ -399,6 +437,21 @@ async function inject() {
         // Copy preload.js to the root
         console.log(`Copying ${distPreloadPath} to ${path.join(appAsar, 'preload.js')}`);
         fs.copyFileSync(distPreloadPath, path.join(appAsar, 'preload.js'));
+        // Create and copy core directory structure
+        console.log('Copying core modules...');
+        const appAsarCorePath = path.join(appAsar, 'core');
+        copyDirectory(distCorePath, appAsarCorePath);
+        // Create and copy features directory structure
+        console.log('Copying features modules...');
+        const appAsarFeaturesPath = path.join(appAsar, 'features');
+        copyDirectory(distFeaturesPath, appAsarFeaturesPath);
+        // Copy API folder if it exists
+        const distApiPath = path.join(srcDir, 'api');
+        if (fs.existsSync(distApiPath)) {
+            console.log('Copying API modules...');
+            const appAsarApiPath = path.join(appAsar, 'api');
+            copyDirectory(distApiPath, appAsarApiPath);
+        }
         // Generate package.json with correct main path
         console.log(`Generating package.json for Discord`);
         const packageJson = generateDiscordPackageJson();
